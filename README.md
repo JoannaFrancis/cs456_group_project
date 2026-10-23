@@ -4,11 +4,18 @@ This implements the critical authentication process for Option A (push heartbeat
 Python 3.10 or later, standard library only; no pip installs. It validates dummy
 credentials, issues random session tickets, validates tickets, and revokes them.
 The UDP sender belongs inside this process so its beats stop when the process dies.
-The independent monitor, crash simulation, and audit script remain team TODOs.
+The independent heartbeat monitor is implemented with UDP reception, timeout based failure detect, and incident logging. The crash simulation and audit script remain in development by team members.
 
 ## Run on Windows PowerShell
 
-Extract the ZIP, open a terminal in its `auth_ticket_service` folder, then run:
+Extract the ZIP, open a terminal in its `auth_ticket_service` folder. The heartbeat monitor run as an independent process and will listen for UDP heartbeat messages from our critical service while both are running.
+
+Open a powershell terminal and run
+
+```powershell
+py monitor.py
+```
+Open a seperate PowerShell terminal then run:
 
 ```powershell
 py critical_service.py --verbose
@@ -49,10 +56,11 @@ and disappear at restart; expired entries are cleaned during ticket operations.
 The store caps outstanding tickets at 1000. HTTP requests run sequentially with
 3-second socket timeouts. This keeps the prototype small; it is not load resistant.
 
-## Handoff to heartbeat monitor owner
+## Heartbeat Monitor Implementation
 
-Implement an independent `monitor.py` process. Bind a UDP IPv4 socket to
-`127.0.0.1:9999`. The service sends UTF-8 JSON, one object per datagram:
+The independent monitor is implemented in monitor.py. It binds a UDP IPv4 socket to 127.0.0.1:9999 and recieves UTF-8 JSON heartbeat messages from the critical service.
+
+The service sends one JSON object per datagram:
 
 ```json
 {"type":"HEARTBEAT","service":"auth-ticket-service","instance_id":"uuid-per-startup","pid":1234,"sequence":1,"timestamp":1790000000.0}
@@ -60,20 +68,28 @@ Implement an independent `monitor.py` process. Bind a UDP IPv4 socket to
 
 `sequence` increases per attempted send and resets on process restart.
 `timestamp` is Unix wall-clock seconds; `instance_id` changes each startup.
-No credentials or tickets cross this channel. Default interval T = 1 second.
-Suggested starting timeout W = 3 seconds (roughly N = 3 missed beats); these
-monitor settings are proposals, not implemented logic. Revisit after testing.
 
-Monitor implementation checklist:
+No credentials or tickets cross this channel. 
 
-- Parse and validate datagrams without crashing on invalid input.
-- Use the monitor's own `time.monotonic()` receipt time for its timeout.
-  Never use the sender timestamp to extend a deadline.
-- Define startup behavior: report WAITING, then timeout if no first beat arrives.
-- On valid beats show the current service instance and liveness.
-- After W seconds without a valid beat, print a timestamped alert and append an
-  incident to a log. Keep running after timeout. Define recovery/restart handling.
-- UDP send success does not mean the monitor received the packet.
+Default interval T = 1 second.
+
+W = 3 seconds for the timeout window before flagging a failure.
+
+Socket timeout = 1 second to allow monitor to check missing heartbeats.
+
+The monitor uses its own reception time rather then the senders timestamp when evaluating failures to get mos accurate timing.
+
+Detection: Uses an elapsed time since last valid heartbeat using time.monotonic(), rather then relying on specific individual missing packet counts
+
+### Monitoring and fault detection
+
+The monitor recives a UDP datagram and parses their JSON payloads. It checks that each payload is a dictionary and contains our expected heartbeat type and service ID.
+
+When valid heartbeat arrives the monitor updates lastBeat and displays sequence number and reception time.
+
+If 3 seconds pass without a valid heartbeat the monitor Prints a timestamped timeout alert, Records the incident in Heartbeat-Faults.log, and continues running and continues listening for incoming heartbeats.
+
+The faultDetected flag will prevent repeated alerts during the same outage. This gets reset when a valid heartbeat is recieved and process goes back to normal flow.
 
 The sender has its own thread so normal HTTP work does not interrupt beats.
 A beat proves the sender is running, not that authentication is responsive:
@@ -115,8 +131,8 @@ and restart rules agreed on by both sender and monitor.
 ## Scope and limitations
 
 This is a local classroom prototype using HTTP and hard-coded dummy passwords.
-It is not Kerberos or a production authentication server. The monitor and audit
-script are deliberately absent, and failure injection is an inactive documented
+It is not Kerberos or a production authentication server. The audit
+script is deliberately absent, and failure injection is an inactive documented
 hook. The group still needs those implementations, CONTRIBUTIONS.md with real
 names/contributions, report, and video. Review and understand the code, and
 mention AI assistance in the individual reflection if you use it.
