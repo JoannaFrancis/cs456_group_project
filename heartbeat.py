@@ -17,7 +17,6 @@ def monitor(host, port):
     serverSocket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
     serverSocket.bind((host, port))
-    #heartbeatInterval
     serverSocket.settimeout(1)
 
     timeoutThreshold = 3
@@ -46,7 +45,10 @@ def monitor(host, port):
                 payload = None
 
             #Check if msgPayload = "HEARTBEAT" & service = auth ticket service
-            validBeat = payload.get("type") == "HEARTBEAT" and payload.get("service") == "auth-ticket-service"
+            #payload check to ensure dict before we access it
+            validBeat = (isinstance(payload,dict)
+                        and payload.get("type") == "HEARTBEAT" 
+                        and payload.get("service") == "auth-ticket-service")
 
             if validBeat:
 
