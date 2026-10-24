@@ -110,7 +110,7 @@ The memory leak simulator functions as follows :
         - add amount appended to the total-memory-leaked value
         - check if total-memory-leaked is past the hard-coded memory leak budget. If so, add a critical failure message to the logger and utilize os.exit(1) to shutdown the whole kernel
            heartbeat and all.
-   - Upon completion and failure, the kernel is shutdown and the heartbeats stop forcing the monitor to hit a timeout error.
+   - Upon completion and failure, the kernel is shutdown and the heartbeats stop, forcing the monitor to hit a timeout error.
 
  The simulation generally runs and completes in around ~2 minutes.
 
