@@ -11,6 +11,7 @@ import socket
 import threading
 import time
 import uuid
+import random
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 LOG = logging.getLogger('auth-service')
@@ -18,7 +19,7 @@ LOG = logging.getLogger('auth-service')
 USERS = {'alice': 'alice-demo', 'bob': 'bob-demo'}
 MAX_BODY_BYTES = 4096
 MAX_TICKETS = 1000
-
+LEAK_MAX = 8 * 1024 * 1024 # 8 MiB
 
 class TicketStore:
     """Owned by the single HTTP service thread; heartbeat thread never accesses it."""
@@ -49,18 +50,33 @@ class TicketStore:
 
 
 def start_failure_simulation(stop_event):
-    """INACTIVE integration hook owned by the failure-simulation teammate.
+    memory_leak_thread = threading.Thread(
+        target=memory_leak_loop,
+        args=(stop_event,)
+    )
+    memory_leak_thread.start()
+    return memory_leak_thread
 
-    Called once at startup. Return None now, or a started Thread after implementing.
-    Suggested design: keep bytearray blocks referenced in a local list, allocate
-    small random sizes at random intervals, then log and os._exit(1) at a modest
-    configured budget (e.g. 16 MiB). Random growth makes crash timing variable.
-    Touch allocated bytes, use stop_event.wait(delay), and make simulation opt-in.
-    This models a leak within a bound; do not exhaust the computer's real RAM.
-    An exception/SystemExit in a worker only stops that worker; the assignment
-    requires termination of the WHOLE process, including its heartbeat thread.
-    """
-    return None
+def memory_leak_loop(stop_event):
+    bytearray_blocks = [] #allocated locally to avoid garbage collection
+    total_leaked = 0 #prevents the simulated memory leak from going too far
+    while not stop_event.is_set():
+        delay = random.uniform(0.001, 1.4)
+        if stop_event.wait(delay): 
+            break # Exit loop if stop_event triggered
+
+        chunk_size = random.randint(10240, 102400) # 10KiB to 100KiB
+        block = bytearray(chunk_size)
+
+        # Force the OS to actually commit the RAM to a physical page
+        block[random.randint(0, chunk_size - 1)] = 0xFF
+
+        bytearray_blocks.append(block)
+        total_leaked += chunk_size
+
+        if total_leaked >= LEAK_MAX:
+            LOG.info("CRITICAL: Simulated Failure through memory leak reached maximum budget. Terminating kernel...")
+            os._exit(1)
 
 
 def send_heartbeats(stop_event, monitor_host, monitor_port, interval, instance_id):
@@ -182,6 +198,7 @@ def main():
     parser.add_argument('--heartbeat-interval', type=positive_seconds, default=1.0)
     parser.add_argument('--ticket-ttl', type=positive_seconds, default=60.0)
     parser.add_argument('--verbose', action='store_true')
+    parser.add_argument('--sim-leak', default=False)
     args = parser.parse_args()
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
                         format='%(asctime)s %(levelname)s %(message)s')
@@ -197,7 +214,9 @@ def main():
         fault_worker = None
         try:
             heartbeat.start()
-            fault_worker = start_failure_simulation(stop_event)
+            if args.sim_leak : #OPT-IN
+                fault_worker = start_failure_simulation(stop_event)
+
             LOG.info('Service ready at http://%s:%d; instance=%s', args.host, args.port, instance_id)
             LOG.info('UDP heartbeats to %s:%d every %.2f seconds',
                      args.monitor_host, args.monitor_port, args.heartbeat_interval)
