@@ -95,28 +95,25 @@ The sender has its own thread so normal HTTP work does not interrupt beats.
 A beat proves the sender is running, not that authentication is responsive:
 a hung HTTP thread can coexist with a healthy sender. Document that limitation.
 
-## Handoff to failure simulation owner
+## Failure Simulation 
 
-Replace `start_failure_simulation(stop_event)` in `critical_service.py`.
-It currently returns None and causes NO failures. Called once after startup;
-it can return a started background Thread for shutdown cleanup.
+Once the critical ticketing service is up and running, if the --sim-leak argument is set to true, the memory leak simulator will cause a kernel shutdown. 
+  
+The memory leak simulator functions as follows : 
+   - Initialize a separate thread to run the memory leak loop. This allows the simulation to function synchronously with the critical service without blocking
+     requests on the main connection and heartbeat thread. 
+   - A local byte array list is initialized outside the loop to avoid Python's garbage collector and a total-memory-leaked value is set to 0
+   - While the stop_event is not set, the simulation will continually loop over the following :
+        - Set a random delay and wait
+        - set a random byte array chunk size and set a random byte in this array to 0xFF forcing the OS to commit the RAM to a physical page
+        - append the chunk to the local byte array list
+        - add amount appended to the total-memory-leaked value
+        - check if total-memory-leaked is past the hard-coded memory leak budget. If so, add a critical failure message to the logger and utilize os.exit(1) to shutdown the whole kernel
+           heartbeat and all.
+   - Upon completion and failure, the kernel is shutdown and the heartbeats stop, forcing the monitor to hit a timeout error.
 
-Suggested bounded memory-leak model:
+ The simulation generally runs and completes in around ~2 minutes.
 
-1. Add explicit CLI opt-in (for example `--simulate-leak`) and configurable budget.
-2. In a worker, retain bytearray objects in a list so memory cannot be reclaimed.
-3. Wait a random duration between allocations and allocate random block sizes.
-   Example: 0.3–1.5 seconds and 128–512 KiB; touch allocated bytes.
-4. Track retained bytes. At a modest budget such as 16 MiB, log the simulated
-   exhaustion with flush enabled, then call `os._exit(1)` to end the entire process.
-5. Use `stop_event.wait(delay)` to allow clean cancellation during ordinary shutdown.
-
-This models progressive leakage and exhaustion without exhausting the host.
-Random growth/waits make the crash timing unpredictable; do not use a fixed
-request-count crash. Do not claim actual OS out-of-memory termination. Raising
-an exception or calling `sys.exit()` in the worker only kills that thread and
-leaves the heartbeat alive, so it does not meet the assignment's crash rule.
-Ctrl+C is useful for development but is not the required stochastic failure.
 
 ## Handoff to adversarial audit owner
 
