@@ -125,11 +125,73 @@ results. Sequence checks alone do not stop an attacker forging fresh sequences.
 Optional hardening would require shared-key authentication and explicit freshness
 and restart rules agreed on by both sender and monitor.
 
-## Scope and limitations
+## Adversarial Audit
 
-This is a local classroom prototype using HTTP and hard-coded dummy passwords.
-It is not Kerberos or a production authentication server. The audit
-script is deliberately absent, and failure injection is an inactive documented
-hook. The group still needs those implementations, CONTRIBUTIONS.md with real
-names/contributions, report, and video. Review and understand the code, and
-mention AI assistance in the individual reflection if you use it.
+`heartbeat_audit.cpp` is an authorized localhost audit utility that demonstrates
+heartbeat spoofing and replay attacks against the baseline monitor. It only sends
+UDP datagrams to `127.0.0.1:9999`, the local monitor used by this prototype.
+
+On Linux/Halibut, compile the audit utility with:
+
+```bash
+g++ -std=c++17 -Wall -Wextra -o heartbeat_audit heartbeat_audit.cpp
+
+### Capture a legitimate heartbeat for replay
+
+The monitor must be stopped because the capture utility temporarily listens on UDP port 9999.
+
+1. Start the normal critical service:
+
+   ```bash
+   python critical_service.py --verbose
+   ```
+
+2. In a second terminal, capture one legitimate heartbeat:
+
+   ```bash
+   ./heartbeat_audit capture
+   ```
+
+This saves the received datagram unchanged to `captured_heartbeat.json`. Stop the normal critical service after capture with `Ctrl+C`.
+
+### Demonstrate service failure
+
+1. Start the monitor:
+
+   ```bash
+   python monitor.py
+   ```
+
+2. Start the critical service with simulated failure enabled:
+
+   ```bash
+   python critical_service.py --verbose --sim-leak true
+   ```
+
+3. After the critical service terminates, wait at least three seconds for the monitor to print and log its timeout alert.
+
+### Heartbeat spoofing attack
+
+After the critical service has crashed and the monitor has reported a timeout, send newly forged heartbeat messages:
+
+```bash
+./heartbeat_audit spoof --count 6 --interval 0.75
+```
+
+The baseline monitor accepts the forged heartbeat packets and clears its fault state even though the real critical service remains offline.
+
+### Replay attack
+
+After the monitor times out again, replay the previously captured legitimate heartbeat without changing its contents:
+
+```bash
+./heartbeat_audit replay --count 6 --interval 0.75
+```
+
+The baseline monitor accepts the stale heartbeat packet, including its old timestamp, sequence number, and instance ID, and treats the failed service as healthy.
+
+### Audit findings and recommended mitigations
+
+The baseline monitor checks only that an incoming JSON packet has the expected heartbeat type and service name. It does not authenticate the sender, validate timestamp freshness, enforce sequence progression, or verify that the `instance_id` belongs to the currently running service. As a result, an attacker can mask a service outage with both forged and replayed heartbeat packets.
+
+A production design should use a message authentication code (HMAC) with a shared secret to detect spoofed or modified packets. It should also require authenticated timestamp freshness and/or a strictly increasing sequence number associated with the active service instance to reject replayed messages.
