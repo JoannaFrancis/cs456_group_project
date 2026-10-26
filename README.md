@@ -13,18 +13,18 @@ Extract the ZIP, open a terminal in its `auth_ticket_service` folder. The heartb
 Open a powershell terminal and run
 
 ```powershell
-py monitor.py
+python monitor.py
 ```
 Open a seperate PowerShell terminal then run:
 
 ```powershell
-py critical_service.py --verbose
+python critical_service.py --verbose
 ```
 
 Leave that running. In another terminal in the same folder:
 
 ```powershell
-py demo_client.py
+python demo_client.py
 ```
 
 On Linux/macOS replace `py` with `python3`. On Windows `python` also works if
@@ -35,7 +35,7 @@ and rejection of a wrong password. Tickets expire after 60 seconds by default.
 Optional configuration (times are seconds):
 
 ```powershell
-py critical_service.py --port 8000 --monitor-host 127.0.0.1 --monitor-port 9999 --heartbeat-interval 1 --ticket-ttl 60
+python critical_service.py --port 8000 --monitor-host 127.0.0.1 --monitor-port 9999 --heartbeat-interval 1 --ticket-ttl 60
 ```
 
 ## HTTP service contract
