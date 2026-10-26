@@ -1,6 +1,6 @@
 # CS456 Authentication and Ticket Critical Process
 ## Joanna Welch
-Adversarial Auditor
+Adversarial Auditor  
 Demo video recorder
 
 ## Madison Wacaser
@@ -8,5 +8,5 @@ Demo video recorder
 ## Andrew Bowman
 
 ## Moze Bemelen
-  Simulated failure mechanism
+  Simulated failure mechanism  
   Demo video voice-over
