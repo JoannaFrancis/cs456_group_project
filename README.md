@@ -4,7 +4,8 @@ This implements the critical authentication process for Option A (push heartbeat
 Python 3.10 or later, standard library only; no pip installs. It validates dummy
 credentials, issues random session tickets, validates tickets, and revokes them.
 The UDP sender belongs inside this process so its beats stop when the process dies.
-The independent heartbeat monitor is implemented with UDP reception, timeout based failure detect, and incident logging. The crash simulation and audit script remain in development by team members.
+The independent heartbeat monitor is implemented with UDP reception, timeout based failure detect, and incident logging. The simulated failure functions as a faux memory leak and non-deterministically crashes the entire kernel.
+The audit script remain in development by team members.
 
 ## Run on Windows PowerShell
 
