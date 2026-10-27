@@ -2,7 +2,7 @@
 ## Joanna Welch
 Adversarial auditor: heartbeat spoofing and replay audit utility and testing.
 Recorded the demo video.
-Wrote the adversarial attack analysis for the team report.
+Wrote the execution and setup and adversarial attack analysis for the team report.
 
 ## Madison Wacaser
 Authentication critical process: dummy credential validation, ticket issuance, ticket validation, logout, and ticket expiration.
