@@ -1,198 +1,192 @@
-# CS456 Authentication and Ticket Critical Process
+# CS456 Authentication and Ticket Service
 
-This implements the critical authentication process for Option A (push heartbeats).
-Python 3.10 or later, standard library only; no pip installs. It validates dummy
-credentials, issues random session tickets, validates tickets, and revokes them.
-The UDP sender belongs inside this process so its beats stop when the process dies.
-The independent heartbeat monitor is implemented with UDP reception, timeout based failure detect, and incident logging. The simulated failure functions as a faux memory leak and non-deterministically crashes the entire kernel.
-The audit script remain in development by team members.
+**Team:** Joanna Welch, Madison Wacaser, Andrew Bowman (AJ), Moze Bemelen  
+**Repository:** https://github.com/JoannaFrancis/cs456_group_project
 
-## Run on Windows PowerShell
+Part 1 detects service failure using UDP heartbeats. Part 2 adds ticket
+checkpoints and a warm standby that can take over after the primary crashes.
 
-Extract the ZIP, open a terminal in its `auth_ticket_service` folder. The heartbeat monitor run as an independent process and will listen for UDP heartbeat messages from our critical service while both are running.
+Python 3.10+; no packages to install. Commands below use Windows PowerShell and
+`python`. On Linux, use `python3` if needed. Run commands from the repository
+folder, with all components on the same computer.
 
-Open a powershell terminal and run
+## Verify Part 2 works
 
-```powershell
-python monitor.py
-```
-Open a seperate PowerShell terminal then run:
+Use **three terminals**, all open in the repository folder. Stop any service left
+running from an earlier test.
 
-```powershell
-python critical_service.py --verbose
-```
+### 1. Terminal 1: initialize and start the standby
 
-Leave that running. In another terminal in the same folder:
+Use the same local state folder for this test, even if the repo is in OneDrive:
 
 ```powershell
-python demo_client.py
+python init_state.py --state-dir "$env:LOCALAPPDATA\CS456-State"
+python standby_service.py --state-dir "$env:LOCALAPPDATA\CS456-State" --ticket-ttl 300 --verbose
 ```
 
-On Linux/macOS replace `py` with `python3`. On Windows `python` also works if
-installed on PATH. Ctrl+C stops the service. It runs even without a monitor.
-The demo prints successful login/validation/logout, rejection of a revoked ticket,
-and rejection of a wrong password. Tickets expire after 60 seconds by default.
+Initialize only once. If it says the key already exists, continue without changing it.
 
-Optional configuration (times are seconds):
+**Expected:** `[Standby Ready]`. Leave this terminal running. The standby is waiting;
+it is not serving requests yet.
+
+### 2. Terminal 2: start the primary
 
 ```powershell
-python critical_service.py --port 8000 --monitor-host 127.0.0.1 --monitor-port 9999 --heartbeat-interval 1 --ticket-ttl 60
+python critical_service.py --state-dir "$env:LOCALAPPDATA\CS456-State" --ticket-ttl 300 --sim-leak --verbose
 ```
 
-## HTTP service contract
+**Expected:** service startup and repeated `Checkpoint saved` messages. Leave it running.
+The simulated memory leak will eventually terminate this process.
 
-All operations are POST requests with a JSON object and Content-Length header.
-Request bodies are limited to 4096 bytes. Credentials are `alice` / `alice-demo`
-and `bob` / `bob-demo`.
+### 3. Terminal 3: create and check a ticket
 
-| Endpoint | Request example | Success | Failure |
-| --- | --- | --- | --- |
-| `/login` | `{"username":"alice","password":"alice-demo"}` | 200 with `ticket`, `expires_in_seconds` | 401 wrong credentials; 503 ticket capacity |
-| `/validate` | `{"ticket":"COPY_LOGIN_TICKET"}` | 200 with `valid: true`, `username` | 401 with `valid: false` |
-| `/logout` | `{"ticket":"COPY_LOGIN_TICKET"}` | 200 with `revoked: true` | 401 invalid/expired ticket |
-
-Malformed JSON/fields return 400; unknown POST paths return 404. The same ticket
-can be validated repeatedly until expiration or logout. Tickets live in memory
-and disappear at restart; expired entries are cleaned during ticket operations.
-The store caps outstanding tickets at 1000. HTTP requests run sequentially with
-3-second socket timeouts. This keeps the prototype small; it is not load resistant.
-
-## Heartbeat Monitor Implementation
-
-The independent monitor is implemented in monitor.py. It binds a UDP IPv4 socket to 127.0.0.1:9999 and recieves UTF-8 JSON heartbeat messages from the critical service.
-
-The service sends one JSON object per datagram:
-
-```json
-{"type":"HEARTBEAT","service":"auth-ticket-service","instance_id":"uuid-per-startup","pid":1234,"sequence":1,"timestamp":1790000000.0}
+```powershell
+python ticket_client.py login
+python ticket_client.py validate
 ```
 
-`sequence` increases per attempted send and resets on process restart.
-`timestamp` is Unix wall-clock seconds; `instance_id` changes each startup.
+**Expected:** `login 200` and `validate 200`. The ticket is saved in `demo_ticket.json`.
+Wait until Terminal 2 shows another `Checkpoint saved` message after login.
 
-No credentials or tickets cross this channel. 
+### 4. Wait for the primary to crash
 
-Default interval T = 1 second.
+Watch Terminal 2. After roughly a couple of minutes, it should report simulated
+memory exhaustion and exit. The exact time varies.
 
-W = 3 seconds for the timeout window before flagging a failure.
+In Terminal 3, run:
 
-Socket timeout = 1 second to allow monitor to check missing heartbeats.
+```powershell
+python ticket_client.py validate
+```
 
-The monitor uses its own reception time rather then the senders timestamp when evaluating failures to get mos accurate timing.
+**Expected:** a connection error, because the primary is down and standby has not
+been promoted. The 300-second ticket lifetime gives time to finish the demo.
 
-Detection: Uses an elapsed time since last valid heartbeat using time.monotonic(), rather then relying on specific individual missing packet counts
+### 5. Terminal 3: promote the standby
 
-### Monitoring and fault detection
+```powershell
+python promote_standby.py --state-dir "$env:LOCALAPPDATA\CS456-State"
+```
 
-The monitor recives a UDP datagram and parses their JSON payloads. It checks that each payload is a dictionary and contains our expected heartbeat type and service ID.
+**Expected in Terminal 1:** `Checkpoint loaded` and `[Service Restored]`.
+The helper saying a request was sent is not proof of recovery; check Terminal 1.
 
-When valid heartbeat arrives the monitor updates lastBeat and displays sequence number and reception time.
+### 6. Terminal 3: check the SAME ticket again
 
-If 3 seconds pass without a valid heartbeat the monitor Prints a timestamped timeout alert, Records the incident in Heartbeat-Faults.log, and continues running and continues listening for incoming heartbeats.
+```powershell
+python ticket_client.py validate
+```
 
-The faultDetected flag will prevent repeated alerts during the same outage. This gets reset when a valid heartbeat is recieved and process goes back to normal flow.
+**Expected:** `validate 200` with username `alice`.
+**Do not log in again.** Accepting the original ticket proves checkpoint recovery worked.
+If you get 401, the ticket may have expired or was not saved before the crash;
+repeat with a fresh login and wait for a checkpoint before failure.
 
-The sender has its own thread so normal HTTP work does not interrupt beats.
-A beat proves the sender is running, not that authentication is responsive:
-a hung HTTP thread can coexist with a healthy sender. Document that limitation.
+Stop the recovered service with Ctrl+C in Terminal 1 when finished.
 
-## Failure Simulation 
+**Monitor integration:** these steps manually test the recovery component. AJ must
+connect `monitor.py` to the promotion helper for automatic failover. See
+[MONITOR_HANDOFF.md](MONITOR_HANDOFF.md). Once integrated, the monitor performs
+step 5 automatically.
 
-Once the critical ticketing service is up and running, if the --sim-leak argument is set to true, the memory leak simulator will cause a kernel shutdown. 
-  
-The memory leak simulator functions as follows : 
-   - Initialize a separate thread to run the memory leak loop. This allows the simulation to function synchronously with the critical service without blocking
-     requests on the main connection and heartbeat thread. 
-   - A local byte array list is initialized outside the loop to avoid Python's garbage collector and a total-memory-leaked value is set to 0
-   - While the stop_event is not set, the simulation will continually loop over the following :
-        - Set a random delay and wait
-        - set a random byte array chunk size and set a random byte in this array to 0xFF forcing the OS to commit the RAM to a physical page
-        - append the chunk to the local byte array list
-        - add amount appended to the total-memory-leaked value
-        - check if total-memory-leaked is past the hard-coded memory leak budget. If so, add a critical failure message to the logger and utilize os.exit(1) to shutdown the whole kernel
-           heartbeat and all.
-   - Upon completion and failure, the kernel is shutdown and the heartbeats stop, forcing the monitor to hit a timeout error.
+## Run the recovery tests
 
- The simulation generally runs and completes in around ~2 minutes.
+```powershell
+python -m unittest discover -s tests -v
+```
 
+**Expected:** eight tests pass with `OK`. Tests cover ticket recovery, expiration,
+revocation, corrupted checkpoints, and refused promotion while the primary is alive.
+They passed on Linux; Windows locking support has not yet been verified on Windows.
 
-## Handoff to adversarial audit owner
+## Part 1 authentication and heartbeat demo
 
-This baseline heartbeat is intentionally unauthenticated. The timestamp,
-sequence, PID, UUID, and source address are metadata, not proof of authenticity.
-A forged packet or replay may keep a naive monitor green after a crash.
-Coordinate the monitor's validation rules with the audit owner; document observed
-results. Sequence checks alone do not stop an attacker forging fresh sequences.
-Optional hardening would require shared-key authentication and explicit freshness
-and restart rules agreed on by both sender and monitor.
+Stop the Part 2 service and standby first. Initialize state as above if needed.
 
-## Adversarial Audit
+| Terminal | Command |
+| --- | --- |
+| 1 | `python monitor.py` |
+| 2 | `python critical_service.py --state-dir "$env:LOCALAPPDATA\CS456-State" --verbose --sim-leak` |
+| 3 | `python demo_client.py` |
 
-`heartbeat_audit.cpp` is an authorized localhost audit utility that demonstrates
-heartbeat spoofing and replay attacks against the baseline monitor. It only sends
-UDP datagrams to `127.0.0.1:9999`, the local monitor used by this prototype.
+**Expected client results:** login 200, validate 200, logout 200, validate 401,
+incorrect-password login 401. Both 401 responses are expected rejections.
 
-On Linux/Halibut, compile the audit utility with:
+After the simulated crash, the monitor prints an alert and writes
+`Heartbeat-Faults.log`. Its baseline timeout is three seconds since the last accepted
+heartbeat; alerts usually appear after about three to four seconds.
+
+## Part 1 spoofing and replay audit — Linux
+
+Run all components on the same Linux host. Use `python3 init_state.py` once to
+initialize the default local `state/` folder. Do not run standby or automatic
+promotion during this baseline attack demonstration.
+
+Compile:
 
 ```bash
 g++ -std=c++17 -Wall -Wextra -o heartbeat_audit heartbeat_audit.cpp
+```
 
-### Capture a legitimate heartbeat for replay
+With the monitor stopped, start the service in one terminal and capture a beat in another:
 
-The monitor must be stopped because the capture utility temporarily listens on UDP port 9999.
+```bash
+python3 critical_service.py --verbose
+```
 
-1. Start the normal critical service:
+```bash
+./heartbeat_audit capture
+```
 
-   ```bash
-   python critical_service.py --verbose
-   ```
+**Expected:** `captured_heartbeat.json` is saved. Stop the service with Ctrl+C.
+Start the monitor and service in separate terminals:
 
-2. In a second terminal, capture one legitimate heartbeat:
+```bash
+python3 monitor.py
+```
 
-   ```bash
-   ./heartbeat_audit capture
-   ```
+```bash
+python3 critical_service.py --verbose --sim-leak
+```
 
-This saves the received datagram unchanged to `captured_heartbeat.json`. Stop the normal critical service after capture with `Ctrl+C`.
-
-### Demonstrate service failure
-
-1. Start the monitor:
-
-   ```bash
-   python monitor.py
-   ```
-
-2. Start the critical service with simulated failure enabled:
-
-   ```bash
-   python critical_service.py --verbose --sim-leak true
-   ```
-
-3. After the critical service terminates, wait at least three seconds for the monitor to print and log its timeout alert.
-
-### Heartbeat spoofing attack
-
-After the critical service has crashed and the monitor has reported a timeout, send newly forged heartbeat messages:
+After the service crashes and the monitor alerts, run:
 
 ```bash
 ./heartbeat_audit spoof --count 6 --interval 0.75
 ```
 
-The baseline monitor accepts the forged heartbeat packets and clears its fault state even though the real critical service remains offline.
-
-### Replay attack
-
-After the monitor times out again, replay the previously captured legitimate heartbeat without changing its contents:
+Wait for another timeout, then run:
 
 ```bash
 ./heartbeat_audit replay --count 6 --interval 0.75
 ```
 
-The baseline monitor accepts the stale heartbeat packet, including its old timestamp, sequence number, and instance ID, and treats the failed service as healthy.
+**Expected:** the baseline monitor accepts fake/replayed beats despite the service
+being offline, then times out again after each attack stops.
 
-### Audit findings and recommended mitigations
+## Files and behavior
 
-The baseline monitor checks only that an incoming JSON packet has the expected heartbeat type and service name. It does not authenticate the sender, validate timestamp freshness, enforce sequence progression, or verify that the `instance_id` belongs to the currently running service. As a result, an attacker can mask a service outage with both forged and replayed heartbeat packets.
+| File | Purpose |
+| --- | --- |
+| `critical_service.py` | Authentication, heartbeats, and periodic checkpoints |
+| `monitor.py` | Heartbeat monitoring; automatic promotion needs integration |
+| `checkpoint.py` | Atomic checkpoint writes and HMAC verification |
+| `process_lock.py` | Prevent two cooperating local processes from owning the service |
+| `standby_service.py` | Wait, restore saved state, and take over on promotion |
+| `init_state.py`, `settings.py` | Signing-key setup and default state path |
+| `promote_standby.py` | Request takeover from the monitor or a test terminal |
+| `ticket_client.py` | Keep a ticket across failover |
+| `demo_client.py`, `heartbeat_audit.cpp` | Part 1 authentication and audit demos |
 
-A production design should use a message authentication code (HMAC) with a shared secret to detect spoofed or modified packets. It should also require authenticated timestamp freshness and/or a strictly increasing sequence number associated with the active service instance to reject replayed messages.
+- HTTP: `127.0.0.1:8000`; UDP heartbeats: `127.0.0.1:9999`, once per second.
+- Dummy accounts: `alice` / `alice-demo`, `bob` / `bob-demo`.
+- `POST /login`, `/validate`, `/logout`; `GET /health` checks readiness.
+- Checkpoints save once per second. Tickets keep their original expiration.
+  Changes after the last save can be lost, including recent logouts.
+- A living primary holds the ownership lock, so false promotion is refused.
+  Missing, corrupted, or modified checkpoints also cause recovery refusal.
+- Checkpoints and promotion requests are signed; UDP heartbeats remain unauthenticated.
+  Protect the signing key. Someone who can read it can forge signed state.
+- Keep generated state, keys, logs, and `demo_ticket.json` out of Git. Do not delete
+  lock files or replace keys to force recovery. This implementation uses one host
+  and local storage; it does not provide distributed fencing or rollback protection.
