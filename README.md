@@ -84,10 +84,36 @@ repeat with a fresh login and wait for a checkpoint before failure.
 
 Stop the recovered service with Ctrl+C in Terminal 1 when finished.
 
-**Monitor integration:** these steps manually test the recovery component. AJ must
-connect `monitor.py` to the promotion helper for automatic failover. See
-[MONITOR_HANDOFF.md](MONITOR_HANDOFF.md). Once integrated, the monitor performs
-step 5 automatically.
+## Automatic failover (monitor.py)
+
+The monitor replaces manual step 5. All three processes must use the **same** `--state-dir`
+(same signing key and promotion folder).
+
+| Terminal | Command |
+| --- | --- |
+| 1 | `python standby_service.py --state-dir "$env:LOCALAPPDATA\CS456-State" --ticket-ttl 300 --verbose` |
+| 2 | `python monitor.py --state-dir "$env:LOCALAPPDATA\CS456-State"` |
+| 3 | `python critical_service.py --state-dir "$env:LOCALAPPDATA\CS456-State" --ticket-ttl 300 --sim-leak --verbose` |
+| 4 | `python ticket_client.py login`, wait for a checkpoint, then after failover `python ticket_client.py validate` |
+
+Start the primary within 10 seconds of the monitor; otherwise the monitor treats it as a
+startup failure and promotes the standby.
+
+**Expected monitor output after the crash:**
+`[Crash Detected]` → `[Failover Triggered]` → `[Service Restored] role=promoted-standby`,
+then heartbeats from the new instance. Events are timestamped and also written to
+`Heartbeat-Faults.log` (in the folder the monitor was started from).
+
+How the monitor decides:
+- Heartbeat timeout is 3 s (10 s before the first heartbeat).
+- On timeout it checks `GET /health`. If the same instance still answers, it logs
+  `[Heartbeat Warning]` and does not fail over; `[Heartbeat Restored]` when beats return.
+- Otherwise it writes a signed promotion request (`promote_standby.request_promotion`) and
+  waits up to 5 s for `/health` to report `role=promoted-standby`.
+- No standby ready --> `[Recovery Failed]`; the monitor keeps running and reports
+  `[Service Restored] role=primary` when a primary is restarted manually.
+- Services are tracked by `instance_id`, so the monitor keeps working across repeated
+  crash/recovery cycles without a restart.
 
 ## Run the recovery tests
 
@@ -169,7 +195,7 @@ being offline, then times out again after each attack stops.
 | File | Purpose |
 | --- | --- |
 | `critical_service.py` | Authentication, heartbeats, and periodic checkpoints |
-| `monitor.py` | Heartbeat monitoring; automatic promotion needs integration |
+| `monitor.py` | Heartbeat monitoring, /health check, automatic standby promotion |
 | `checkpoint.py` | Atomic checkpoint writes and HMAC verification |
 | `process_lock.py` | Prevent two cooperating local processes from owning the service |
 | `standby_service.py` | Wait, restore saved state, and take over on promotion |

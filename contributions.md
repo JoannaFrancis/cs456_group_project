@@ -10,6 +10,7 @@ Service-side UDP heartbeat sender and initial integration notes for teammates.
 
 ## Andrew Bowman
 Independent heartbeat monitor: UDP heartbeat reception, message validation, elapsed-time timeout detection, timestamped alerts, and incident logging.
+Part 2 monitor failover controller: /health verification to prevent false failover, signed automatic standby promotion, recovery confirmation and timeout, recovery-failure reporting, manual restart detection, instance tracking across repeated failover cycles, shared state directory option, and README automatic failover section.
 
 ## Moze Bemelen
 Simulated failure mechanism: randomized background memory allocation, retained allocation tracking, and termination of the entire service process at the simulation budget.
