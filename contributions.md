@@ -13,6 +13,10 @@ Independent heartbeat monitor: UDP heartbeat reception, message validation, elap
 Part 2 monitor failover controller: /health verification to prevent false failover, signed automatic standby promotion, recovery confirmation and timeout, recovery-failure reporting, manual restart detection, instance tracking across repeated failover cycles, shared state directory option, and README automatic failover section.
 
 ## Moze Bemelen
+Part 1:
 Simulated failure mechanism: randomized background memory allocation, retained allocation tracking, and termination of the entire service process at the simulation budget.
 Provided the demo video voiceover.
 Wrote the Service Overview section of the PDF report.
+Part 2:
+Wrote objective overview, architectural design diagram, and architectural design justification portions of PDF report.
+Filmed and voiced over the demo video
